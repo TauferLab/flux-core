@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 import argparse
+import os
 import re
 import csv
 import math
@@ -10,7 +11,7 @@ import logging
 import heapq
 from abc import ABCMeta, abstractmethod
 from datetime import datetime, timedelta
-from collections import Sequence, namedtuple
+from collections import Sequence, namedtuple, OrderedDict
 
 import six
 import flux
@@ -527,10 +528,25 @@ class SimpleExec(object):
             end=-1,
         )
 
+    # Function that defines the format of the output csv
+    def define_output(self, event_type, simulation, job):
+        output_data = OrderedDict([('event_type', event_type),\
+                                   ('time', simulation.current_time),\
+                                   ('jobid', job.jobid),\
+                                   ('nnodes', job.nnodes),\
+                                   ('timelimit', job.timelimit),\
+                                   ('elapsed', job.elapsed_time)])
+        return output_data
+
     # Simple function for writing simulation data to output
-    def write_output(self, msg):
+    def write_output(self, event_type, simulation, job):
         if self.output is None:
             return
+        data = self.define_output(event_type, simulation, job)
+        msg = ','.join([str(x) for x in data.values()])
+        if not os.path.exists(self.output):
+            header = ','.join([str(x) for x in data.keys()])
+            msg = '\n'.join([header, msg])
         with open(self.output, "a") as f:
             f.write(msg + '\n')
 
@@ -542,7 +558,7 @@ class SimpleExec(object):
 
     def submit_job(self, simulation, job):
         self.update_makespan(simulation.current_time)
-        self.write_output("{}".format(simulation.current_time))
+        self.write_output("submit", simulation, job)
 
     def start_job(self, simulation, job):
         self.num_free_nodes -= job.nnodes
@@ -550,11 +566,13 @@ class SimpleExec(object):
             logger.error("Scheduler over-subscribed nodes")
         if (job.ncpus / job.nnodes) > self.cores_per_node:
             logger.error("Scheduler over-subscribed cores on the node")
+        self.write_output("start", simulation, job)
 
     def complete_job(self, simulation, job):
         self.num_free_nodes += job.nnodes
         self.used_core_hours += (job.ncpus * job.elapsed_time) / 3600
         self.update_makespan(simulation.current_time)
+        self.write_output("complete", simulation, job)
 
     def post_analysis(self, simulation):
         if self.makespan.beginning > self.makespan.end:
