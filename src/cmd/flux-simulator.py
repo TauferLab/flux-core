@@ -139,6 +139,22 @@ class Job(object):
     def record_state_transition(self, state, time):
         self.state_transitions[state] = time
 
+
+class Contention(object):
+    def __init__(self, start_time, end_time, severity):
+        self.start_time = start_time
+        self.end_time = end_time
+        self.severity = severity
+        self.contentionid = None
+
+    def start(self, event_list):
+        #print(event_list.time_heap)
+        return event_list
+
+    def insert_apriori_events(self, simulation):
+        simulation.add_event(self.start_time, lambda: simulation.start_contention(self))
+
+
 class EventList(six.Iterator):
     def __init__(self):
         self.time_heap = []
@@ -198,6 +214,8 @@ class Simulation(object):
             submit_job_hook=None,
             start_job_hook=None,
             complete_job_hook=None,
+            start_contention_hook=None,\
+            end_contention_hook=None
     ):
         self.event_list = event_list
         self.job_map = job_map
@@ -208,9 +226,24 @@ class Simulation(object):
         self.submit_job_hook = submit_job_hook
         self.start_job_hook = start_job_hook
         self.complete_job_hook = complete_job_hook
+        self.start_contention_hook = start_contention_hook
+        self.end_contention_hook = end_contention_hook
+        self.contention = False
 
     def add_event(self, time, callback):
         self.event_list.add_event(time, callback)
+
+    def start_contention(self, contention):
+        if self.start_contention_hook:
+            self.start_contention_hook(self, contention)
+        self.contention = True
+        self.event_list = contention.start(self.event_list)
+        self.add_event(contention.end_time, lambda: self.end_contention(contention))
+
+    def end_contention(self, contention):
+        if self.end_contention_hook:
+            self.end_contention_hook(self, contention)
+        self.contention = False
 
     def submit_job(self, job):
         logger.debug("Submitting a new job")
@@ -222,19 +255,19 @@ class Simulation(object):
 
     def start_job(self, jobid, start_msg):
         job = self.job_map[jobid]
+        if self.start_job_hook:
+            self.start_job_hook(self, job)
         job.start(self.flux_handle, start_msg, self.current_time)
         logger.info("Started job {}".format(job.jobid))
         self.add_event(job.complete_time, lambda: self.complete_job(job))
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
-        if self.start_job_hook:
-            self.start_job_hook(self, job)
 
     def complete_job(self, job):
+        if self.complete_job_hook:
+            self.complete_job_hook(self, job)
         job.complete(self.flux_handle)
         logger.info("Completed job {}".format(job.jobid))
         self.pending_inactivations.add(job)
-        if self.complete_job_hook:
-            self.complete_job_hook(self, job)
 
     def record_job_state_transition(self, jobid, state):
         job = self.job_map[jobid]
@@ -556,6 +589,12 @@ class SimpleExec(object):
         if current_time > self.makespan.end:
             self.makespan = self.makespan._replace(end=current_time)
 
+    def start_contention(self, simulation, contention):
+        return None
+
+    def end_contention(self, simulation, contention):
+        return None
+
     def submit_job(self, simulation, job):
         self.update_makespan(simulation.current_time)
         self.write_output("submit", simulation, job)
@@ -609,18 +648,23 @@ def main():
 
     exec_validator = SimpleExec(args.num_ranks, args.cores_per_rank, args.output)
     simulation = Simulation(
-        flux_handle,
-        EventList(),
-        {},
-        submit_job_hook=exec_validator.submit_job,
-        start_job_hook=exec_validator.start_job,
-        complete_job_hook=exec_validator.complete_job,
+        flux_handle,\
+        EventList(),\
+        {},\
+        submit_job_hook=exec_validator.submit_job,\
+        start_job_hook=exec_validator.start_job,\
+        complete_job_hook=exec_validator.complete_job,\
+        start_contention_hook=exec_validator.start_contention,\
+        end_contention_hook=exec_validator.end_contention
     )
     reader = SacctReader(args.job_file)
     reader.validate_trace()
     jobs = list(reader.read_trace())
     for job in jobs:
         job.insert_apriori_events(simulation)
+
+    c = Contention(start_time=int((datetime(2019,1,1,0,20) - datetime(1970, 1, 1)).total_seconds()), end_time=int((datetime(2019,1,1,0,40) - datetime(1970, 1, 1)).total_seconds()), severity=50)
+    c.insert_apriori_events(simulation)
 
     load_missing_modules(flux_handle)
     insert_resource_data(flux_handle, args.num_ranks, args.cores_per_rank)
