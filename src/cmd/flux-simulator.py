@@ -565,7 +565,12 @@ class SimpleExec(object):
 
 logger = logging.getLogger("flux-simulator")
 
-
+# Simple function for writing simulation data to output
+def write_output(filename, msg):
+    if not filename:
+        return
+    with open(filename, 'w') as f:
+        f.write(msg + '\n')
 
 @flux.util.CLIMain(logger)
 def main():
@@ -573,7 +578,7 @@ def main():
     parser.add_argument("job_file")
     parser.add_argument("num_ranks", type=int)
     parser.add_argument("cores_per_rank", type=int)
-    #parser.add_argument("--output", "-o", type=str)
+    parser.add_argument("--output", "-o", type=str)
     parser.add_argument("--log-level", type=int)
     args = parser.parse_args()
 
