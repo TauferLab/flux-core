@@ -212,28 +212,28 @@ class Simulation(object):
         self.event_list.add_event(time, callback)
 
     def submit_job(self, job):
-        if self.submit_job_hook:
-            self.submit_job_hook(self, job)
         logger.debug("Submitting a new job")
         job.submit(self.flux_handle)
         self.job_map[job.jobid] = job
         logger.info("Submitted job {}".format(job.jobid))
+        if self.submit_job_hook:
+            self.submit_job_hook(self, job)
 
     def start_job(self, jobid, start_msg):
         job = self.job_map[jobid]
-        if self.start_job_hook:
-            self.start_job_hook(self, job)
         job.start(self.flux_handle, start_msg, self.current_time)
         logger.info("Started job {}".format(job.jobid))
         self.add_event(job.complete_time, lambda: self.complete_job(job))
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
+        if self.start_job_hook:
+            self.start_job_hook(self, job)
 
     def complete_job(self, job):
-        if self.complete_job_hook:
-            self.complete_job_hook(self, job)
         job.complete(self.flux_handle)
         logger.info("Completed job {}".format(job.jobid))
         self.pending_inactivations.add(job)
+        if self.complete_job_hook:
+            self.complete_job_hook(self, job)
 
     def record_job_state_transition(self, jobid, state):
         job = self.job_map[jobid]
