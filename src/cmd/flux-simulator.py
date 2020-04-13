@@ -516,16 +516,23 @@ def teardown_watchers(flux_handle, watchers, services):
 Makespan = namedtuple('Makespan', ['beginning', 'end'])
 
 class SimpleExec(object):
-    def __init__(self, num_nodes, cores_per_node):
+    def __init__(self, num_nodes, cores_per_node, output):
         self.num_nodes = num_nodes
         self.cores_per_node = cores_per_node
         self.num_free_nodes = num_nodes
+        self.output = output
         self.used_core_hours = 0
-
         self.makespan = Makespan(
             beginning=float('inf'),
             end=-1,
         )
+
+    # Simple function for writing simulation data to output
+    def write_output(self, msg):
+        if self.output is None:
+            return
+        with open(self.output, "a") as f:
+            f.write(msg + '\n')
 
     def update_makespan(self, current_time):
         if current_time < self.makespan.beginning:
@@ -535,6 +542,7 @@ class SimpleExec(object):
 
     def submit_job(self, simulation, job):
         self.update_makespan(simulation.current_time)
+        self.write_output("{}".format(simulation.current_time))
 
     def start_job(self, simulation, job):
         self.num_free_nodes -= job.nnodes
@@ -565,12 +573,6 @@ class SimpleExec(object):
 
 logger = logging.getLogger("flux-simulator")
 
-# Simple function for writing simulation data to output
-def write_output(filename, msg):
-    if not filename:
-        return
-    with open(filename, 'w') as f:
-        f.write(msg + '\n')
 
 @flux.util.CLIMain(logger)
 def main():
@@ -587,7 +589,7 @@ def main():
 
     flux_handle = flux.Flux()
 
-    exec_validator = SimpleExec(args.num_ranks, args.cores_per_rank)
+    exec_validator = SimpleExec(args.num_ranks, args.cores_per_rank, args.output)
     simulation = Simulation(
         flux_handle,
         EventList(),
