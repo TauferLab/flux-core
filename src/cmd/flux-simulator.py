@@ -423,7 +423,7 @@ def job_state_cb(flux_handle, watcher, msg, simulation):
     example payload: {u'transitions': [[63652757504, u'CLEANUP'], [63652757504, u'INACTIVE']]}
     '''
     logger.log(9, "Received a job state cb. msg payload: {}".format(msg.payload))
-    for jobid, state in msg.payload['transitions']:
+    for jobid, state, _ in msg.payload['transitions']:
         simulation.record_job_state_transition(jobid, state)
 
 def get_loaded_modules(flux_handle):
@@ -566,12 +566,14 @@ class SimpleExec(object):
 logger = logging.getLogger("flux-simulator")
 
 
+
 @flux.util.CLIMain(logger)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("job_file")
     parser.add_argument("num_ranks", type=int)
     parser.add_argument("cores_per_rank", type=int)
+    #parser.add_argument("--output", "-o", type=str)
     parser.add_argument("--log-level", type=int)
     args = parser.parse_args()
 
