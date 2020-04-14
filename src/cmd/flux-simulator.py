@@ -148,15 +148,20 @@ class Contention(object):
         self.contentionid = None
 
     def modify_job(self, simulation, job):
+        job.elapsed_time += 60
         return job
 
-    def start(self, event_list):
-        #import inspect
+    def start(self, simulation, event_list):
+        new_event_list = EventList()
+        print(event_list.time_heap)
+        for time, events in event_list.time_heap:
+            for event_type, callback, data in events:
+                if event_type == 'complete':
+                    data = self.modify_job(simulation, data)
+                    time = data.complete_time
+                new_event_list.add_event(time, event_type, callback, data)
 
-        #func = event_list.time_heap[0][1][0]
-        #print(inspect.getargspec(func))
-
-        return event_list
+        return new_event_list
 
     def insert_apriori_events(self, simulation):
         simulation.add_event(self.start_time, 'contention', simulation.start_contention, self)
@@ -243,7 +248,7 @@ class Simulation(object):
     def start_contention(self, contention):
         if self.start_contention_hook:
             self.start_contention_hook(self, contention)
-        self.event_list = contention.start(self.event_list)
+        self.event_list = contention.start(self, self.event_list)
         self.contention = contention
         self.add_event(contention.end_time, 'contention', self.end_contention, contention)
 
