@@ -134,7 +134,7 @@ class Job(object):
     def insert_apriori_events(self, simulation):
         # TODO: add priority to `add_event` so that all submits for a given time
         # can happen consecutively, followed by the waits for the jobids
-        simulation.add_event(self.submit_time, lambda: simulation.submit_job(self))
+        simulation.add_event(self.submit_time, 'submit', simulation.submit_job, self)
 
     def record_state_transition(self, state, time):
         self.state_transitions[state] = time
@@ -147,12 +147,19 @@ class Contention(object):
         self.severity = severity
         self.contentionid = None
 
+    def modify_job(self, simulation, job):
+        return job
+
     def start(self, event_list):
-        #print(event_list.time_heap)
+        #import inspect
+
+        #func = event_list.time_heap[0][1][0]
+        #print(inspect.getargspec(func))
+
         return event_list
 
     def insert_apriori_events(self, simulation):
-        simulation.add_event(self.start_time, lambda: simulation.start_contention(self))
+        simulation.add_event(self.start_time, 'contention', simulation.start_contention, self)
 
 
 class EventList(six.Iterator):
@@ -161,7 +168,7 @@ class EventList(six.Iterator):
         self.time_map = {}
         self._current_time = None
 
-    def add_event(self, time, callback):
+    def add_event(self, time, event_type, callback, data):
         if self._current_time is not None and time <= self._current_time:
             logger.warn(
                 "Adding a new event at a time ({}) <= the current time ({})".format(
@@ -170,9 +177,9 @@ class EventList(six.Iterator):
             )
 
         if time in self.time_map:
-            self.time_map[time].append(callback)
+            self.time_map[time].append((event_type, callback, data))
         else:
-            new_event_list = [callback]
+            new_event_list = [(event_type, callback, data)]
             self.time_map[time] = new_event_list
             heapq.heappush(self.time_heap, (time, new_event_list))
 
@@ -230,15 +237,15 @@ class Simulation(object):
         self.end_contention_hook = end_contention_hook
         self.contention = False
 
-    def add_event(self, time, callback):
-        self.event_list.add_event(time, callback)
+    def add_event(self, time, event_type, callback, data):
+        self.event_list.add_event(time, event_type, callback, data)
 
     def start_contention(self, contention):
         if self.start_contention_hook:
             self.start_contention_hook(self, contention)
-        self.contention = True
         self.event_list = contention.start(self.event_list)
-        self.add_event(contention.end_time, lambda: self.end_contention(contention))
+        self.contention = contention
+        self.add_event(contention.end_time, 'contention', self.end_contention, contention)
 
     def end_contention(self, contention):
         if self.end_contention_hook:
@@ -257,9 +264,11 @@ class Simulation(object):
         job = self.job_map[jobid]
         if self.start_job_hook:
             self.start_job_hook(self, job)
+        if self.contention:
+            job = self.contention.modify_job(self, job)
         job.start(self.flux_handle, start_msg, self.current_time)
         logger.info("Started job {}".format(job.jobid))
-        self.add_event(job.complete_time, lambda: self.complete_job(job))
+        self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
 
     def complete_job(self, job):
@@ -287,8 +296,8 @@ class Simulation(object):
             self.flux_handle.reactor_stop(self.flux_handle.get_reactor())
             return
         logger.info("Fast-forwarding time to {}".format(self.current_time))
-        for event in events_at_time:
-            event()
+        for _, event, data in events_at_time:
+            event(data)
         logger.debug("Sending quiescent request for time {}".format(self.current_time))
         self.flux_handle.rpc("job-manager.quiescent", {"time": self.current_time}).then(
             lambda fut, arg: arg.quiescent_cb(), arg=self
