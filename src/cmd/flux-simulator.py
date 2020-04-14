@@ -9,6 +9,7 @@ import math
 import json
 import logging
 import heapq
+import random
 from abc import ABCMeta, abstractmethod
 from datetime import datetime, timedelta
 from collections import Sequence, namedtuple, OrderedDict
@@ -148,12 +149,13 @@ class Contention(object):
         self.contentionid = None
 
     def modify_job(self, simulation, job):
-        job.elapsed_time += 60
+        contention_overlap = min(self.end_time, job.complete_time) - simulation.current_time
+        job.elapsed_time += int(contention_overlap * random.uniform(*self.severity))
+        job.elapsed_time = min(job.timelimit, job.elapsed_time)
         return job
 
     def start(self, simulation, event_list):
         new_event_list = EventList()
-        print(event_list.time_heap)
         for time, events in event_list.time_heap:
             for event_type, callback, data in events:
                 if event_type == 'complete':
@@ -269,10 +271,10 @@ class Simulation(object):
         job = self.job_map[jobid]
         if self.start_job_hook:
             self.start_job_hook(self, job)
-        if self.contention:
-            job = self.contention.modify_job(self, job)
         job.start(self.flux_handle, start_msg, self.current_time)
         logger.info("Started job {}".format(job.jobid))
+        if self.contention:
+            job = self.contention.modify_job(self, job)
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
 
@@ -677,7 +679,7 @@ def main():
     for job in jobs:
         job.insert_apriori_events(simulation)
 
-    c = Contention(start_time=int((datetime(2019,1,1,0,20) - datetime(1970, 1, 1)).total_seconds()), end_time=int((datetime(2019,1,1,0,40) - datetime(1970, 1, 1)).total_seconds()), severity=50)
+    c = Contention(start_time=int((datetime(2019,1,1,0,20) - datetime(1970, 1, 1)).total_seconds()), end_time=int((datetime(2019,1,1,0,40) - datetime(1970, 1, 1)).total_seconds()), severity=(0,1))
     c.insert_apriori_events(simulation)
 
     load_missing_modules(flux_handle)
