@@ -41,13 +41,14 @@ def create_slot(label, count, with_child):
 
 
 class Job(object):
-    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, exitcode=0):
+    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, exitcode=0):
         self.nnodes = nnodes
         self.ncpus = ncpus
         self.submit_time = submit_time
         self.elapsed_time = elapsed_time
         self.timelimit = timelimit
         self.exitcode = exitcode
+        self.io_sens = io_sens
         self.start_time = None
         self.state_transitions = {}
         self._jobid = None
@@ -148,7 +149,11 @@ class Contention(object):
         self.severity = severity
         self.contentionid = None
 
+    # TODO: fix this method - instead of severity, it should be based on the %
+    # of normal progress a job can have during the contention event
     def modify_job(self, simulation, job):
+        if not job.io_sens:
+            return job
         contention_overlap = min(self.end_time, job.complete_time) - simulation.current_time
         job.elapsed_time += int(contention_overlap * random.uniform(*self.severity))
         job.elapsed_time = min(job.timelimit, job.elapsed_time)
@@ -222,14 +227,15 @@ class EventList(six.Iterator):
 class Simulation(object):
     def __init__(
             self,
-            flux_handle,
-            event_list,
-            job_map,
-            submit_job_hook=None,
-            start_job_hook=None,
-            complete_job_hook=None,
+            flux_handle,\
+            event_list,\
+            job_map,\
+            submit_job_hook=None,\
+            start_job_hook=None,\
+            complete_job_hook=None,\
             start_contention_hook=None,\
-            end_contention_hook=None
+            end_contention_hook=None,\
+            oracle=None
     ):
         self.event_list = event_list
         self.job_map = job_map
@@ -242,12 +248,15 @@ class Simulation(object):
         self.complete_job_hook = complete_job_hook
         self.start_contention_hook = start_contention_hook
         self.end_contention_hook = end_contention_hook
+        self.oracle=oracle
         self.contention = False
 
     def add_event(self, time, event_type, callback, data):
         self.event_list.add_event(time, event_type, callback, data)
 
     def start_contention(self, contention):
+        if self.oracle:
+            contention = self.oracle.pred_contention(contention)
         if self.start_contention_hook:
             self.start_contention_hook(self, contention)
         self.event_list = contention.start(self, self.event_list)
@@ -269,6 +278,20 @@ class Simulation(object):
 
     def start_job(self, jobid, start_msg):
         job = self.job_map[jobid]
+        if self.oracle:
+            job = self.oracle.pred_io_sens(job)
+        if self.oracle and self.contention:
+            if self.contention.predicted and job.predicted_sens:
+                # First cancel the job
+                job.start(self.flux_handle, start_msg, self.current_time)
+                print('cancelling', jobid)
+                job.cancel(self.flux_handle)
+                # Then resubmit
+                job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit)
+                self.add_event(job.submit_time, 'submit', self.submit_job, job)
+
+                return None
+
         if self.start_job_hook:
             self.start_job_hook(self, job)
         job.start(self.flux_handle, start_msg, self.current_time)
@@ -277,6 +300,8 @@ class Simulation(object):
             job = self.contention.modify_job(self, job)
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
+        # Put updated job into job_map
+        self.job_map[jobid] = job
 
     def complete_job(self, job):
         if self.complete_job_hook:
@@ -374,6 +399,8 @@ def job_from_slurm_row(row):
     kwargs = {}
     if "ExitCode" in row:
         kwargs["exitcode"] = "ExitCode"
+    if "IOSens" in row:
+        kwargs["io_sens"] = bool(int(row["IOSens"]))
 
     submit_time = datetime_to_epoch(
         datetime.strptime(row["Submit"], "%Y-%m-%dT%H:%M:%S")
@@ -408,7 +435,7 @@ def job_from_slurm_row(row):
 
 
 class SacctReader(JobTraceReader):
-    required_fields = ["Elapsed", "Timelimit", "Submit", "NNodes", "NCPUS"]
+    required_fields = ["Elapsed", "Timelimit", "Submit", "NNodes", "NCPUS", "IOSens"]
 
     def __init__(self, tracefile):
         super(SacctReader, self).__init__(tracefile)
@@ -565,6 +592,19 @@ def teardown_watchers(flux_handle, watchers, services):
 
 Makespan = namedtuple('Makespan', ['beginning', 'end'])
 
+class Oracle(object):
+    def __init__(self, accuracy=100):
+        self.accuracy = accuracy
+
+    def pred_contention(self, contention):
+        contention.predicted = True
+        return contention
+
+    def pred_io_sens(self, job):
+        job.predicted_sens = job.io_sens
+        return job
+
+
 class SimpleExec(object):
     def __init__(self, num_nodes, cores_per_node, output):
         self.num_nodes = num_nodes
@@ -584,7 +624,9 @@ class SimpleExec(object):
                                    ('jobid', job.jobid),\
                                    ('nnodes', job.nnodes),\
                                    ('timelimit', job.timelimit),\
-                                   ('elapsed', job.elapsed_time)])
+                                   ('elapsed', job.elapsed_time),\
+                                   ('io_sens', job.io_sens),\
+                                   ('contention', bool(simulation.contention))])
         return output_data
 
     # Simple function for writing simulation data to output
@@ -663,6 +705,7 @@ def main():
     flux_handle = flux.Flux()
 
     exec_validator = SimpleExec(args.num_ranks, args.cores_per_rank, args.output)
+    oracle = Oracle()
     simulation = Simulation(
         flux_handle,\
         EventList(),\
@@ -671,7 +714,8 @@ def main():
         start_job_hook=exec_validator.start_job,\
         complete_job_hook=exec_validator.complete_job,\
         start_contention_hook=exec_validator.start_contention,\
-        end_contention_hook=exec_validator.end_contention
+        end_contention_hook=exec_validator.end_contention,\
+        oracle=oracle
     )
     reader = SacctReader(args.job_file)
     reader.validate_trace()
@@ -679,8 +723,11 @@ def main():
     for job in jobs:
         job.insert_apriori_events(simulation)
 
-    c = Contention(start_time=int((datetime(2019,1,1,0,20) - datetime(1970, 1, 1)).total_seconds()), end_time=int((datetime(2019,1,1,0,40) - datetime(1970, 1, 1)).total_seconds()), severity=(0,1))
-    c.insert_apriori_events(simulation)
+    C = [Contention(start_time=int((datetime(2020,1,1,1)-datetime(1970,1,1)).total_seconds()),\
+                    end_time=int((datetime(2020,1,1,3)-datetime(1970,1,1)).total_seconds()),\
+                    severity=(.8,1))]
+    for c in C:
+        c.insert_apriori_events(simulation)
 
     load_missing_modules(flux_handle)
     insert_resource_data(flux_handle, args.num_ranks, args.cores_per_rank)
