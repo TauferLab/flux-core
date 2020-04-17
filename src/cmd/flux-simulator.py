@@ -286,8 +286,10 @@ class Simulation(object):
                 job.start(self.flux_handle, start_msg, self.current_time)
                 print('cancelling', jobid)
                 job.cancel(self.flux_handle)
+                del self.job_map[jobid]
+                #self.pending_inactivations.add(job)
                 # Then resubmit
-                job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit)
+                job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit, job.io_sens)
                 self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
                 return None
@@ -311,7 +313,10 @@ class Simulation(object):
         self.pending_inactivations.add(job)
 
     def record_job_state_transition(self, jobid, state):
-        job = self.job_map[jobid]
+        try:
+            job = self.job_map[jobid]
+        except KeyError:
+            return
         job.record_state_transition(state, self.current_time)
         if state == 'INACTIVE' and job in self.pending_inactivations:
             self.pending_inactivations.remove(job)
