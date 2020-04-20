@@ -41,7 +41,7 @@ def create_slot(label, count, with_child):
 
 
 class Job(object):
-    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, exitcode=0):
+    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, exitcode=0):
         self.nnodes = nnodes
         self.ncpus = ncpus
         self.submit_time = submit_time
@@ -49,6 +49,7 @@ class Job(object):
         self.timelimit = timelimit
         self.exitcode = exitcode
         self.io_sens = io_sens
+        self.resubmit = resubmit
         self.start_time = None
         self.state_transitions = {}
         self._jobid = None
@@ -281,15 +282,14 @@ class Simulation(object):
         if self.oracle:
             job = self.oracle.pred_io_sens(job)
         if self.oracle and self.contention:
+            # Do we predict contention and IO-sens job? CanarIO Action
             if self.contention.predicted and job.predicted_sens:
                 # First cancel the job
                 job.start(self.flux_handle, start_msg, self.current_time)
-                print('cancelling', jobid)
                 job.cancel(self.flux_handle)
                 del self.job_map[jobid]
-                #self.pending_inactivations.add(job)
                 # Then resubmit
-                job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit, job.io_sens)
+                job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
                 self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
                 return None
@@ -631,6 +631,7 @@ class SimpleExec(object):
                                    ('timelimit', job.timelimit),\
                                    ('elapsed', job.elapsed_time),\
                                    ('io_sens', job.io_sens),\
+                                   ('resubmit', job.resubmit),\
                                    ('contention', bool(simulation.contention))])
         return output_data
 
