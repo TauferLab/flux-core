@@ -41,7 +41,7 @@ def create_slot(label, count, with_child):
 
 
 class Job(object):
-    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, exitcode=0):
+    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, IO=0, exitcode=0):
         self.nnodes = nnodes
         self.ncpus = ncpus
         self.submit_time = submit_time
@@ -49,6 +49,7 @@ class Job(object):
         self.timelimit = timelimit
         self.exitcode = exitcode
         self.io_sens = io_sens
+        self.IO = IO
         self.resubmit = resubmit
         self.start_time = None
         self.state_transitions = {}
@@ -251,13 +252,15 @@ class Simulation(object):
         self.end_contention_hook = end_contention_hook
         self.oracle=oracle
         self.contention = False
+        self.IO_usage = 0 # Current mean IO usage
+        self.IO_limit = 100 # max IO usage before contention occurs
 
     def add_event(self, time, event_type, callback, data):
         self.event_list.add_event(time, event_type, callback, data)
 
     def start_contention(self, contention):
         if self.oracle:
-            contention = self.oracle.pred_contention(contention)
+            contention = self.oracle.predict_contention(contention)
         if self.start_contention_hook:
             self.start_contention_hook(self, contention)
         self.event_list = contention.start(self, self.event_list)
@@ -280,19 +283,31 @@ class Simulation(object):
     def start_job(self, jobid, start_msg):
         job = self.job_map[jobid]
         if self.oracle:
-            job = self.oracle.pred_io_sens(job)
-        if self.oracle and self.contention:
-            # Do we predict contention and IO-sens job? CanarIO Action
-            if self.contention.predicted and job.predicted_sens:
-                # First cancel the job
+            job = self.oracle.predict_job(job)
+            if (self.IO_usage + job.predicted_IO) > self.IO_limit:
                 job.start(self.flux_handle, start_msg, self.current_time)
                 job.cancel(self.flux_handle)
                 del self.job_map[jobid]
                 # Then resubmit
-                job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
+                job = Job(job.nnodes, job.ncpus, self.current_time+60, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
                 self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
                 return None
+
+            if self.contention:
+                # Do we predict contention and IO-sens job? CanarIO Action
+                if self.contention.predicted and job.predicted_sens:
+                    # TODO need to add logic in here so that if there are no other
+                    # jobs to run, the IO sens job can still run!
+                    # First cancel the job
+                    job.start(self.flux_handle, start_msg, self.current_time)
+                    job.cancel(self.flux_handle)
+                    del self.job_map[jobid]
+                    # Then resubmit
+                    job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
+                    self.add_event(job.submit_time, 'submit', self.submit_job, job)
+
+                    return None
 
         if self.start_job_hook:
             self.start_job_hook(self, job)
@@ -300,6 +315,7 @@ class Simulation(object):
         logger.info("Started job {}".format(job.jobid))
         if self.contention:
             job = self.contention.modify_job(self, job)
+        self.IO_usage += job.IO
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
         # Put updated job into job_map
@@ -311,6 +327,7 @@ class Simulation(object):
         job.complete(self.flux_handle)
         logger.info("Completed job {}".format(job.jobid))
         self.pending_inactivations.add(job)
+        self.IO_usage -= job.IO
 
     def record_job_state_transition(self, jobid, state):
         try:
@@ -406,6 +423,8 @@ def job_from_slurm_row(row):
         kwargs["exitcode"] = "ExitCode"
     if "IOSens" in row:
         kwargs["io_sens"] = bool(int(row["IOSens"]))
+    if "IO" in row:
+        kwargs["IO"] = int(row["IO"])
 
     submit_time = datetime_to_epoch(
         datetime.strptime(row["Submit"], "%Y-%m-%dT%H:%M:%S")
@@ -601,13 +620,20 @@ class Oracle(object):
     def __init__(self, accuracy=100):
         self.accuracy = accuracy
 
-    def pred_contention(self, contention):
+    def predict_job(self, job):
+        job.predicted_sens = self.predict_io_sens(job)
+        job.predicted_IO = self.predict_io(job)
+        return job
+
+    def predict_contention(self, contention):
         contention.predicted = True
         return contention
 
-    def pred_io_sens(self, job):
-        job.predicted_sens = job.io_sens
-        return job
+    def predict_io_sens(self, job):
+        return job.io_sens
+
+    def predict_io(self, job):
+        return job.IO
 
 
 class SimpleExec(object):
