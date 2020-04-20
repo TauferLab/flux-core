@@ -280,18 +280,21 @@ class Simulation(object):
         if self.submit_job_hook:
             self.submit_job_hook(self, job)
 
+    def resubmit_job(self, job, submit_time, start_msg):
+        # Run the job for 1 second (gets around bug in job.cancel)
+        # TODO: address bug in job.cancel
+        job.start(self.flux_handle, start_msg, self.current_time)
+        self.add_event(self.current_time+1, 'complete', self.complete_job, job)
+        # Then make a new job and resubmit
+        job = Job(job.nnodes, job.ncpus, submit_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
+        self.add_event(job.submit_time, 'submit', self.submit_job, job)
+
     def start_job(self, jobid, start_msg):
         job = self.job_map[jobid]
         if self.oracle:
             job = self.oracle.predict_job(job)
             if (self.IO_usage + job.predicted_IO) > self.IO_limit:
-                job.start(self.flux_handle, start_msg, self.current_time)
-                job.cancel(self.flux_handle)
-                del self.job_map[jobid]
-                # Then resubmit
-                job = Job(job.nnodes, job.ncpus, self.current_time+60, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
-                self.add_event(job.submit_time, 'submit', self.submit_job, job)
-
+                self.resubmit_job(job, self.current_time+1, start_msg)
                 return None
 
             if self.contention:
@@ -300,13 +303,7 @@ class Simulation(object):
                     # TODO need to add logic in here so that if there are no other
                     # jobs to run, the IO sens job can still run!
                     # First cancel the job
-                    job.start(self.flux_handle, start_msg, self.current_time)
-                    job.cancel(self.flux_handle)
-                    del self.job_map[jobid]
-                    # Then resubmit
-                    job = Job(job.nnodes, job.ncpus, self.contention.end_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
-                    self.add_event(job.submit_time, 'submit', self.submit_job, job)
-
+                    self.resubmit_job(job, self.contention.end_time+1, start_msg)
                     return None
 
         if self.start_job_hook:
