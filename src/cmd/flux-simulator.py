@@ -254,6 +254,7 @@ class Simulation(object):
         self.contention = False
         self.IO_usage = 0 # Current mean IO usage
         self.IO_limit = 100 # max IO usage before contention occurs
+        self.queued_jobs = 0
 
     def add_event(self, time, event_type, callback, data):
         self.event_list.add_event(time, event_type, callback, data)
@@ -277,6 +278,7 @@ class Simulation(object):
         job.submit(self.flux_handle)
         self.job_map[job.jobid] = job
         logger.info("Submitted job {}".format(job.jobid))
+        self.queued_jobs += 1
         if self.submit_job_hook:
             self.submit_job_hook(self, job)
 
@@ -293,11 +295,14 @@ class Simulation(object):
         job = self.job_map[jobid]
         if self.oracle:
             job = self.oracle.predict_job(job)
-            if (self.IO_usage + job.predicted_IO) > self.IO_limit:
+            if self.queued_jobs > 1:
+                pass
+
+            elif (self.IO_usage + job.predicted_IO) > self.IO_limit:
                 self.resubmit_job(job, self.current_time+1, start_msg)
                 return None
 
-            if self.contention:
+            elif self.contention:
                 # Do we predict contention and IO-sens job? CanarIO Action
                 if self.contention.predicted and job.predicted_sens:
                     # TODO need to add logic in here so that if there are no other
@@ -313,6 +318,7 @@ class Simulation(object):
         if self.contention:
             job = self.contention.modify_job(self, job)
         self.IO_usage += job.IO
+        self.queued_jobs -= 1
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
         # Put updated job into job_map
