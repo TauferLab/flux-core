@@ -269,6 +269,8 @@ class Simulation(object):
         self.add_event(contention.end_time, 'contention', self.end_contention, contention)
 
     def end_contention(self, contention):
+        if self.IO_usage > self.IO_limit:
+            self.add_event(self.current_time+60, 'contention', self.end_contention, contention)
         if self.end_contention_hook:
             self.end_contention_hook(self, contention)
         self.contention = False
@@ -321,6 +323,15 @@ class Simulation(object):
         self.queued_jobs -= 1
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
+        # Check if IO_limit has exceeded and start contention if necessary
+        if self.IO_usage > self.IO_limit:
+            C = Contention(start_time=self.current_time+1,\
+                           end_time=self.current_time+60,\
+                           severity=(.5,1))
+
+            self.add_event(C.start_time, 'contention', self.start_contention, C)
+
+
         # Put updated job into job_map
         self.job_map[jobid] = job
 
