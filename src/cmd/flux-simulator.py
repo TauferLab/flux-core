@@ -670,6 +670,7 @@ class SimpleExec(object):
                                    ('nnodes', job.nnodes),\
                                    ('timelimit', job.timelimit),\
                                    ('elapsed', job.elapsed_time),\
+                                   ('IO', job.IO),\
                                    ('io_sens', job.io_sens),\
                                    ('resubmit', job.resubmit),\
                                    ('contention', bool(simulation.contention))])
@@ -772,8 +773,8 @@ def main():
     C = [Contention(start_time=int((datetime(2020,1,1,1)-datetime(1970,1,1)).total_seconds()),\
                     end_time=int((datetime(2020,1,1,3)-datetime(1970,1,1)).total_seconds()),\
                     severity=(.8,1))]
-    for c in C:
-        c.insert_apriori_events(simulation)
+    #for c in C:
+    #    c.insert_apriori_events(simulation)
 
     load_missing_modules(flux_handle)
     insert_resource_data(flux_handle, args.num_ranks, args.cores_per_rank)
