@@ -4,6 +4,7 @@ from __future__ import print_function
 import argparse
 import os
 import re
+import uuid
 import csv
 import math
 import json
@@ -149,7 +150,7 @@ class Contention(object):
         self.start_time = start_time
         self.end_time = end_time
         self.severity = severity
-        self.contentionid = None
+        self.id = uuid.uuid4()
 
     # TODO: fix this method - instead of severity, it should be based on the %
     # of normal progress a job can have during the contention event
@@ -251,9 +252,9 @@ class Simulation(object):
         self.start_contention_hook = start_contention_hook
         self.end_contention_hook = end_contention_hook
         self.oracle=oracle
-        self.contention = False
+        self.contention = {}
         self.IO_usage = 0 # Current mean IO usage
-        self.IO_limit = 100 # max IO usage before contention occurs
+        self.IO_limit = 200 # max IO usage before contention occurs
         self.queued_jobs = 0
 
     def add_event(self, time, event_type, callback, data):
@@ -265,15 +266,19 @@ class Simulation(object):
         if self.start_contention_hook:
             self.start_contention_hook(self, contention)
         self.event_list = contention.start(self, self.event_list)
-        self.contention = contention
+        self.contention[contention.id] = contention
         self.add_event(contention.end_time, 'contention', self.end_contention, contention)
 
     def end_contention(self, contention):
-        if self.IO_usage > self.IO_limit:
-            self.add_event(self.current_time+60, 'contention', self.end_contention, contention)
         if self.end_contention_hook:
             self.end_contention_hook(self, contention)
-        self.contention = False
+        del self.contention[contention.id]
+        if self.IO_usage > self.IO_limit:
+            C = Contention(start_time=self.current_time+1,\
+                           end_time=self.current_time+600,\
+                           severity=(.8,1))
+
+            self.add_event(C.start_time, 'contention', self.start_contention, C)
 
     def submit_job(self, job):
         logger.debug("Submitting a new job")
@@ -288,20 +293,20 @@ class Simulation(object):
         # Run the job for 1 second (gets around bug in job.cancel)
         # TODO: address bug in job.cancel
         job.start(self.flux_handle, start_msg, self.current_time)
-        self.add_event(self.current_time+1, 'complete', self.complete_job, job)
+        self.add_event(self.current_time+1, 'complete', self.false_complete_job, job)
         # Then make a new job and resubmit
-        job = Job(job.nnodes, job.ncpus, submit_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True)
+        job = Job(job.nnodes, job.ncpus, submit_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True, IO=job.IO)
         self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
     def start_job(self, jobid, start_msg):
         job = self.job_map[jobid]
         if self.oracle:
             job = self.oracle.predict_job(job)
-            if self.queued_jobs > 1:
+            if self.queued_jobs == 1:
                 pass
 
             elif (self.IO_usage + job.predicted_IO) > self.IO_limit:
-                self.resubmit_job(job, self.current_time+1, start_msg)
+                self.resubmit_job(job, self.current_time+60, start_msg)
                 return None
 
             elif self.contention:
@@ -318,7 +323,8 @@ class Simulation(object):
         job.start(self.flux_handle, start_msg, self.current_time)
         logger.info("Started job {}".format(job.jobid))
         if self.contention:
-            job = self.contention.modify_job(self, job)
+            for id, contention in self.contention.items():
+                job = contention.modify_job(self, job)
         self.IO_usage += job.IO
         self.queued_jobs -= 1
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
@@ -326,8 +332,8 @@ class Simulation(object):
         # Check if IO_limit has exceeded and start contention if necessary
         if self.IO_usage > self.IO_limit:
             C = Contention(start_time=self.current_time+1,\
-                           end_time=self.current_time+60,\
-                           severity=(.5,1))
+                           end_time=self.current_time+600,\
+                           severity=(.8,1))
 
             self.add_event(C.start_time, 'contention', self.start_contention, C)
 
@@ -342,6 +348,13 @@ class Simulation(object):
         logger.info("Completed job {}".format(job.jobid))
         self.pending_inactivations.add(job)
         self.IO_usage -= job.IO
+        if job.timelimit == job.elapsed_time:
+            job = Job(job.nnodes, job.ncpus, self.current_time+1, job.elapsed_time, job.timelimit+3600, job.io_sens, resubmit=True, IO=job.IO)
+            self.add_event(job.submit_time, 'submit', self.submit_job, job)
+
+    def false_complete_job(self, job):
+        job.complete(self.flux_handle)
+        self.pending_inactivations.add(job)
 
     def record_job_state_transition(self, jobid, state):
         try:
