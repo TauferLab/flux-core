@@ -367,7 +367,7 @@ class Simulation(object):
         if (self.IO_usage > self.IO_limit) and not self.sys_contention:
             C = Contention(start_time=self.current_time+1,\
                            end_time=self.current_time+600,\
-                           severity=(.8,1))
+                           severity=(.2,.6))
 
             self.add_event(C.start_time, 'contention', self.start_sys_contention, C)
 
@@ -378,7 +378,7 @@ class Simulation(object):
     def complete_job(self, job):
         good_put = True
         if job.timelimit == job.elapsed_time:
-            if self.resub_chance < random.uniform(0,1):
+            if self.resub_chance > random.uniform(0,1):
                 good_put = False
         job.good_put = good_put
         if self.complete_job_hook:
@@ -808,6 +808,11 @@ def main():
     parser.add_argument("cores_per_rank", type=int)
     parser.add_argument("--output", "-o", type=str)
     parser.add_argument("--log-level", type=int)
+    parser.add_argument("--oracle", action='store_true')
+    parser.add_argument("--resub_chance", type=float, default=1.0)
+    parser.add_argument("--canario_job_acc", type=float, default=1.0)
+    parser.add_argument("--canario_con_acc", type=float, default=1.0)
+    parser.add_argument("--prionn_job_acc", type=float, default=1.0)
     args = parser.parse_args()
 
     if args.log_level:
@@ -816,7 +821,13 @@ def main():
     flux_handle = flux.Flux()
 
     exec_validator = SimpleExec(args.num_ranks, args.cores_per_rank, args.output)
-    oracle = Oracle()
+    if args.oracle:
+        oracle = Oracle(PRIONN_job_accuracy=args.prionn_job_acc,\
+                        CanarIO_job_accuracy=args.canario_job_acc,\
+                        CanarIO_contention_accuracy=args.canario_con_acc)
+    else:
+        oracle = None
+
     simulation = Simulation(
         flux_handle,\
         EventList(),\
@@ -826,7 +837,8 @@ def main():
         complete_job_hook=exec_validator.complete_job,\
         start_contention_hook=exec_validator.start_contention,\
         end_contention_hook=exec_validator.end_contention,\
-        oracle=oracle
+        oracle=oracle,\
+        resub_chance=args.resub_chance
     )
     reader = SacctReader(args.job_file)
     reader.validate_trace()
