@@ -42,7 +42,7 @@ def create_slot(label, count, with_child):
 
 
 class Job(object):
-    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, rerun=False, IO=0, exitcode=0):
+    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, rerun=False, IO=0, original_start=False, exitcode=0):
         self.nnodes = nnodes
         self.ncpus = ncpus
         self.submit_time = submit_time
@@ -53,6 +53,7 @@ class Job(object):
         self.IO = IO
         self.resubmit = resubmit
         self.rerun = rerun
+        self.original_start = original_start
         self.start_time = None
         self.state_transitions = {}
         self._jobid = None
@@ -240,7 +241,7 @@ class Simulation(object):
             start_contention_hook=None,\
             end_contention_hook=None,\
             oracle=None,\
-            resub_chance=50
+            resub_chance=0.5
     ):
         self.event_list = event_list
         self.job_map = job_map
@@ -313,7 +314,11 @@ class Simulation(object):
         job.start(self.flux_handle, start_msg, self.current_time)
         self.add_event(self.current_time+1, 'complete', self.false_complete_job, job)
         # Then make a new job and resubmit
-        job = Job(job.nnodes, job.ncpus, submit_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True, IO=job.IO)
+        if job.original_start:
+            original_start = job.original_start
+        else:
+            original_start = self.current_time
+        job = Job(job.nnodes, job.ncpus, submit_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True, IO=job.IO, original_start=original_start)
         self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
     def start_job(self, jobid, start_msg):
@@ -379,7 +384,7 @@ class Simulation(object):
         self.pending_inactivations.add(job)
         self.IO_usage -= job.IO
         if job.timelimit == job.elapsed_time:
-            if self.resub_chance < np.random.randint(0,100):
+            if self.resub_chance < random.uniform(0,1):
                 job = Job(job.nnodes, job.ncpus, self.current_time+1, job.elapsed_time, job.timelimit+3600, job.io_sens, rerun=True, IO=job.IO)
                 self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
@@ -714,6 +719,7 @@ class SimpleExec(object):
                                    ('nnodes', job.nnodes),\
                                    ('timelimit', job.timelimit),\
                                    ('elapsed', job.elapsed_time),\
+                                   ('original_start', job.original_start),\
                                    ('IO', job.IO),\
                                    ('io_sens', job.io_sens),\
                                    ('resubmit', job.resubmit),\
