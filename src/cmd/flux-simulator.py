@@ -174,7 +174,7 @@ class Contention(object):
         return new_event_list
 
     def insert_apriori_events(self, simulation):
-        simulation.add_event(self.start_time, 'contention', simulation.start_contention, self)
+        simulation.add_event(self.start_time, 'contention', simulation.start_contention_event, self)
 
 
 class EventList(six.Iterator):
@@ -252,7 +252,8 @@ class Simulation(object):
         self.start_contention_hook = start_contention_hook
         self.end_contention_hook = end_contention_hook
         self.oracle=oracle
-        self.contention = {}
+        self.contention_event = False
+        self.sys_contention = False
         self.IO_usage = 0 # Current mean IO usage
         self.IO_limit = 200 # max IO usage before contention occurs
         self.queued_jobs = 0
@@ -260,25 +261,39 @@ class Simulation(object):
     def add_event(self, time, event_type, callback, data):
         self.event_list.add_event(time, event_type, callback, data)
 
-    def start_contention(self, contention):
+    def start_sys_contention(self, contention):
         if self.oracle:
             contention = self.oracle.predict_contention(contention)
         if self.start_contention_hook:
             self.start_contention_hook(self, contention)
         self.event_list = contention.start(self, self.event_list)
-        self.contention[contention.id] = contention
-        self.add_event(contention.end_time, 'contention', self.end_contention, contention)
+        self.sys_contention = contention
+        self.add_event(contention.end_time, 'contention', self.end_sys_contention, contention)
 
-    def end_contention(self, contention):
+    def end_sys_contention(self, contention):
         if self.end_contention_hook:
             self.end_contention_hook(self, contention)
-        del self.contention[contention.id]
+        self.sys_contention = False
         if self.IO_usage > self.IO_limit:
             C = Contention(start_time=self.current_time+1,\
                            end_time=self.current_time+600,\
                            severity=(.8,1))
 
-            self.add_event(C.start_time, 'contention', self.start_contention, C)
+            self.add_event(C.start_time, 'contention', self.start_sys_contention, C)
+
+    def start_contention_event(self, contention):
+        if self.oracle:
+            contention = self.oracle.predict_contention(contention)
+        if self.start_contention_hook:
+            self.start_contention_hook(self, contention)
+        self.event_list = contention.start(self, self.event_list)
+        self.contention_event = contention
+        self.add_event(contention.end_time, 'contention', self.end_contention_event, contention)
+
+    def end_contention_event(self, contention):
+        if self.end_contention_hook:
+            self.end_contention_hook(self, contention)
+        self.contention_event = False
 
     def submit_job(self, job):
         logger.debug("Submitting a new job")
@@ -309,33 +324,45 @@ class Simulation(object):
                 self.resubmit_job(job, self.current_time+60, start_msg)
                 return None
 
-            elif self.contention:
+            elif self.sys_contention:
                 # Do we predict contention and IO-sens job? CanarIO Action
-                if self.contention.predicted and job.predicted_sens:
+                if self.sys_contention.predicted and job.predicted_sens:
                     # TODO need to add logic in here so that if there are no other
                     # jobs to run, the IO sens job can still run!
                     # First cancel the job
-                    self.resubmit_job(job, self.contention.end_time+1, start_msg)
+                    self.resubmit_job(job, self.sys_contention.end_time+1, start_msg)
+                    return None
+
+            elif self.contention_event:
+                # Do we predict contention and IO-sens job? CanarIO Action
+                if self.contention_event.predicted and job.predicted_sens:
+                    # TODO need to add logic in here so that if there are no other
+                    # jobs to run, the IO sens job can still run!
+                    # First cancel the job
+                    self.resubmit_job(job, self.contention_event.end_time+1, start_msg)
                     return None
 
         if self.start_job_hook:
             self.start_job_hook(self, job)
         job.start(self.flux_handle, start_msg, self.current_time)
         logger.info("Started job {}".format(job.jobid))
-        if self.contention:
-            for id, contention in self.contention.items():
-                job = contention.modify_job(self, job)
+
+        if self.sys_contention:
+            job = self.sys_contention.modify_job(self, job)
+        if self.contention_event:
+            job = self.contention_event.modify_job(self, job)
+
         self.IO_usage += job.IO
         self.queued_jobs -= 1
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
         # Check if IO_limit has exceeded and start contention if necessary
-        if self.IO_usage > self.IO_limit:
+        if (self.IO_usage > self.IO_limit) and not self.sys_contention:
             C = Contention(start_time=self.current_time+1,\
                            end_time=self.current_time+600,\
                            severity=(.8,1))
 
-            self.add_event(C.start_time, 'contention', self.start_contention, C)
+            self.add_event(C.start_time, 'contention', self.start_sys_contention, C)
 
 
         # Put updated job into job_map
@@ -686,7 +713,8 @@ class SimpleExec(object):
                                    ('IO', job.IO),\
                                    ('io_sens', job.io_sens),\
                                    ('resubmit', job.resubmit),\
-                                   ('contention', bool(simulation.contention))])
+                                   ('contention_event', bool(simulation.contention_event)),\
+                                   ('sys_contention', bool(simulation.sys_contention))])
         return output_data
 
     # Simple function for writing simulation data to output
@@ -786,8 +814,8 @@ def main():
     C = [Contention(start_time=int((datetime(2020,1,1,1)-datetime(1970,1,1)).total_seconds()),\
                     end_time=int((datetime(2020,1,1,3)-datetime(1970,1,1)).total_seconds()),\
                     severity=(.8,1))]
-    #for c in C:
-    #    c.insert_apriori_events(simulation)
+    for c in C:
+        c.insert_apriori_events(simulation)
 
     load_missing_modules(flux_handle)
     insert_resource_data(flux_handle, args.num_ranks, args.cores_per_rank)
