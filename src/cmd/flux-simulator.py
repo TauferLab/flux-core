@@ -683,7 +683,7 @@ def teardown_watchers(flux_handle, watchers, services):
 Makespan = namedtuple('Makespan', ['beginning', 'end'])
 
 class Oracle(object):
-    def __init__(self, PRIONN_accuracy=1, CanarIO_job_accuracy, CanarIO_contention_accuracy):
+    def __init__(self, PRIONN_accuracy=1, CanarIO_job_accuracy=1, CanarIO_contention_accuracy=1):
         self.PRIONN_accuracy = PRIONN_accuracy
         self.CanarIO_job_accuracy = CanarIO_job_accuracy
         self.CanarIO_contention_accuracy = CanarIO_contention_accuracy
@@ -702,12 +702,16 @@ class Oracle(object):
 
     def predict_io_sens(self, job):
         if self.CanarIO_job_accuracy > random.uniform(0,1):
-            return job.io_send
+            return job.io_sens
         else:
             return not job.io_sens
 
     def predict_io(self, job):
-        pred_acc = np.random.normal(self.PRIONN_accuracy, 0.1, 1)
+        if self.PRIONN_accuracy == 1:
+            return job.IO
+
+        pred_acc = random.normalvariate(self.PRIONN_accuracy, 0.1)
+        pred_acc = min(pred_acc, 1)
         pred = job.IO*pred_acc + (.5>random.uniform(0,1))*2*(1-pred_acc)*job.IO
         return pred
 
@@ -736,6 +740,7 @@ class SimpleExec(object):
                                    ('IO', job.IO),\
                                    ('io_sens', job.io_sens),\
                                    ('resubmit', job.resubmit),\
+                                   ('rerun', job.rerun),\
                                    ('contention_event', bool(simulation.contention_event)),\
                                    ('sys_contention', bool(simulation.sys_contention))])
         return output_data
@@ -822,7 +827,7 @@ def main():
 
     exec_validator = SimpleExec(args.num_ranks, args.cores_per_rank, args.output)
     if args.oracle:
-        oracle = Oracle(PRIONN_job_accuracy=args.prionn_job_acc,\
+        oracle = Oracle(PRIONN_accuracy=args.prionn_job_acc,\
                         CanarIO_job_accuracy=args.canario_job_acc,\
                         CanarIO_contention_accuracy=args.canario_con_acc)
     else:
