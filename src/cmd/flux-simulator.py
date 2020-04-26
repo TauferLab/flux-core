@@ -42,7 +42,7 @@ def create_slot(label, count, with_child):
 
 
 class Job(object):
-    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, rerun=False, IO=0, original_start=False, exitcode=0):
+    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, rerun=False, IO=0, original_start=False, good_put=None, exitcode=0):
         self.nnodes = nnodes
         self.ncpus = ncpus
         self.submit_time = submit_time
@@ -54,6 +54,7 @@ class Job(object):
         self.resubmit = resubmit
         self.rerun = rerun
         self.original_start = original_start
+        self.good_put = good_put
         self.start_time = None
         self.state_transitions = {}
         self._jobid = None
@@ -377,14 +378,18 @@ class Simulation(object):
         self.job_map[jobid] = job
 
     def complete_job(self, job):
+        good_put = True
+        if job.timelimit == job.elapsed_time:
+            if self.resub_chance < random.uniform(0,1):
+                good_put = False
+        job.good_put = good_put
         if self.complete_job_hook:
             self.complete_job_hook(self, job)
         job.complete(self.flux_handle)
         logger.info("Completed job {}".format(job.jobid))
         self.pending_inactivations.add(job)
         self.IO_usage -= job.IO
-        if job.timelimit == job.elapsed_time:
-            if self.resub_chance < random.uniform(0,1):
+        if not good_put:
                 job = Job(job.nnodes, job.ncpus, self.current_time+1, job.elapsed_time, job.timelimit+3600, job.io_sens, rerun=True, IO=job.IO)
                 self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
