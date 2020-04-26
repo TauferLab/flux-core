@@ -42,7 +42,7 @@ def create_slot(label, count, with_child):
 
 
 class Job(object):
-    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, IO=0, exitcode=0):
+    def __init__(self, nnodes, ncpus, submit_time, elapsed_time, timelimit, io_sens, resubmit=False, rerun=False, IO=0, exitcode=0):
         self.nnodes = nnodes
         self.ncpus = ncpus
         self.submit_time = submit_time
@@ -52,6 +52,7 @@ class Job(object):
         self.io_sens = io_sens
         self.IO = IO
         self.resubmit = resubmit
+        self.rerun = rerun
         self.start_time = None
         self.state_transitions = {}
         self._jobid = None
@@ -238,7 +239,8 @@ class Simulation(object):
             complete_job_hook=None,\
             start_contention_hook=None,\
             end_contention_hook=None,\
-            oracle=None
+            oracle=None,\
+            resub_chance=50
     ):
         self.event_list = event_list
         self.job_map = job_map
@@ -254,6 +256,7 @@ class Simulation(object):
         self.oracle=oracle
         self.contention_event = False
         self.sys_contention = False
+        self.resub_chance = resub_chance
         self.IO_usage = 0 # Current mean IO usage
         self.IO_limit = 200 # max IO usage before contention occurs
         self.queued_jobs = 0
@@ -376,8 +379,9 @@ class Simulation(object):
         self.pending_inactivations.add(job)
         self.IO_usage -= job.IO
         if job.timelimit == job.elapsed_time:
-            job = Job(job.nnodes, job.ncpus, self.current_time+1, job.elapsed_time, job.timelimit+3600, job.io_sens, resubmit=True, IO=job.IO)
-            self.add_event(job.submit_time, 'submit', self.submit_job, job)
+            if self.resub_chance < np.random.randint(0,100):
+                job = Job(job.nnodes, job.ncpus, self.current_time+1, job.elapsed_time, job.timelimit+3600, job.io_sens, rerun=True, IO=job.IO)
+                self.add_event(job.submit_time, 'submit', self.submit_job, job)
 
     def false_complete_job(self, job):
         job.complete(self.flux_handle)
