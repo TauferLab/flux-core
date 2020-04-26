@@ -155,8 +155,6 @@ class Contention(object):
         self.severity = severity
         self.id = uuid.uuid4()
 
-    # TODO: fix this method - instead of severity, it should be based on the %
-    # of normal progress a job can have during the contention event
     def modify_job(self, simulation, job):
         if not job.io_sens:
             return job
@@ -685,8 +683,10 @@ def teardown_watchers(flux_handle, watchers, services):
 Makespan = namedtuple('Makespan', ['beginning', 'end'])
 
 class Oracle(object):
-    def __init__(self, accuracy=100):
-        self.accuracy = accuracy
+    def __init__(self, PRIONN_accuracy=1, CanarIO_job_accuracy, CanarIO_contention_accuracy):
+        self.PRIONN_accuracy = PRIONN_accuracy
+        self.CanarIO_job_accuracy = CanarIO_job_accuracy
+        self.CanarIO_contention_accuracy = CanarIO_contention_accuracy
 
     def predict_job(self, job):
         job.predicted_sens = self.predict_io_sens(job)
@@ -694,14 +694,22 @@ class Oracle(object):
         return job
 
     def predict_contention(self, contention):
-        contention.predicted = True
+        if self.CanarIO_contention_accuracy > random.uniform(0,1):
+            contention.predicted = True
+        else:
+            contention.predicted = False
         return contention
 
     def predict_io_sens(self, job):
-        return job.io_sens
+        if self.CanarIO_job_accuracy > random.uniform(0,1):
+            return job.io_send
+        else:
+            return not job.io_sens
 
     def predict_io(self, job):
-        return job.IO
+        pred_acc = np.random.normal(self.PRIONN_accuracy, 0.1, 1)
+        pred = job.IO*pred_acc + (.5>random.uniform(0,1))*2*(1-pred_acc)*job.IO
+        return pred
 
 
 class SimpleExec(object):
