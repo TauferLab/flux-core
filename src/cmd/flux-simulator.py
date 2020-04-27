@@ -259,7 +259,7 @@ class Simulation(object):
         self.sys_contention = False
         self.resub_chance = resub_chance
         self.IO_usage = 0 # Current mean IO usage
-        self.IO_limit = 300 # max IO usage before contention occurs
+        self.IO_limit = 200 # max IO usage before contention occurs
         self.queued_jobs = 0
 
     def add_event(self, time, event_type, callback, data):
@@ -744,6 +744,7 @@ class SimpleExec(object):
                                    ('original_start', job.original_start),\
                                    ('IO', job.IO),\
                                    ('io_sens', job.io_sens),\
+                                   ('goodput', job.good_put),\
                                    ('resubmit', job.resubmit),\
                                    ('rerun', job.rerun),\
                                    ('contention_event', bool(simulation.contention_event)),\
