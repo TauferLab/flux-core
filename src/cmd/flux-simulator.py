@@ -237,6 +237,7 @@ class Simulation(object):
             submit_job_hook=None,\
             start_job_hook=None,\
             complete_job_hook=None,\
+            cancel_job_hook=None,\
             start_contention_hook=None,\
             end_contention_hook=None,\
             oracle=None,\
@@ -258,7 +259,7 @@ class Simulation(object):
         self.sys_contention = False
         self.resub_chance = resub_chance
         self.IO_usage = 0 # Current mean IO usage
-        self.IO_limit = 200 # max IO usage before contention occurs
+        self.IO_limit = 300 # max IO usage before contention occurs
         self.queued_jobs = 0
 
     def add_event(self, time, event_type, callback, data):
@@ -307,6 +308,14 @@ class Simulation(object):
         if self.submit_job_hook:
             self.submit_job_hook(self, job)
 
+    def false_submit_job(self, job):
+        job.submit(self.flux_handle)
+        self.job_map[job.jobid] = job
+
+    def false_complete_job(self, job):
+        job.complete(self.flux_handle)
+        self.pending_inactivations.add(job)
+
     def resubmit_job(self, job, submit_time, start_msg):
         # Run the job for 1 second (gets around bug in job.cancel)
         # TODO: address bug in job.cancel
@@ -318,7 +327,7 @@ class Simulation(object):
         else:
             original_start = self.current_time
         job = Job(job.nnodes, job.ncpus, submit_time, job.elapsed_time, job.timelimit, job.io_sens, resubmit=True, IO=job.IO, original_start=original_start)
-        self.add_event(job.submit_time, 'submit', self.submit_job, job)
+        self.add_event(job.submit_time, 'submit', self.false_submit_job, job)
 
     def start_job(self, jobid, start_msg):
         job = self.job_map[jobid]
@@ -328,7 +337,7 @@ class Simulation(object):
                 pass
 
             elif (self.IO_usage + job.predicted_IO) > self.IO_limit:
-                self.resubmit_job(job, self.current_time+60, start_msg)
+                self.resubmit_job(job, self.current_time+600, start_msg)
                 return None
 
             elif self.sys_contention:
@@ -390,10 +399,6 @@ class Simulation(object):
         if not good_put:
                 job = Job(job.nnodes, job.ncpus, self.current_time+1, job.elapsed_time, job.timelimit+3600, job.io_sens, rerun=True, IO=job.IO)
                 self.add_event(job.submit_time, 'submit', self.submit_job, job)
-
-    def false_complete_job(self, job):
-        job.complete(self.flux_handle)
-        self.pending_inactivations.add(job)
 
     def record_job_state_transition(self, jobid, state):
         try:
