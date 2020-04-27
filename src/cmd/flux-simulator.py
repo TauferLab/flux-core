@@ -241,7 +241,8 @@ class Simulation(object):
             start_contention_hook=None,\
             end_contention_hook=None,\
             oracle=None,\
-            resub_chance=0.5
+            resub_chance=0.5,\
+            allow_contention=True
     ):
         self.event_list = event_list
         self.job_map = job_map
@@ -258,8 +259,9 @@ class Simulation(object):
         self.contention_event = False
         self.sys_contention = False
         self.resub_chance = resub_chance
+        self.allow_contention = allow_contention
         self.IO_usage = 0 # Current mean IO usage
-        self.IO_limit = 200 # max IO usage before contention occurs
+        self.IO_limit = 300 # max IO usage before contention occurs
         self.queued_jobs = 0
 
     def add_event(self, time, event_type, callback, data):
@@ -281,7 +283,7 @@ class Simulation(object):
         if self.IO_usage > self.IO_limit:
             C = Contention(start_time=self.current_time+1,\
                            end_time=self.current_time+600,\
-                           severity=(.8,1))
+                           severity=(.2,.6))
 
             self.add_event(C.start_time, 'contention', self.start_sys_contention, C)
 
@@ -373,7 +375,7 @@ class Simulation(object):
         self.add_event(job.complete_time, 'complete', self.complete_job, job)
         logger.debug("Registered job {} to complete at {}".format(job.jobid, job.complete_time))
         # Check if IO_limit has exceeded and start contention if necessary
-        if (self.IO_usage > self.IO_limit) and not self.sys_contention:
+        if (self.IO_usage > self.IO_limit) and not self.sys_contention and self.allow_contention:
             C = Contention(start_time=self.current_time+1,\
                            end_time=self.current_time+600,\
                            severity=(.2,.6))
@@ -824,6 +826,7 @@ def main():
     parser.add_argument("--canario_job_acc", type=float, default=1.0)
     parser.add_argument("--canario_con_acc", type=float, default=1.0)
     parser.add_argument("--prionn_job_acc", type=float, default=1.0)
+    parser.add_argument("--contention", action='store_true', default=False)
     args = parser.parse_args()
 
     if args.log_level:
@@ -849,7 +852,8 @@ def main():
         start_contention_hook=exec_validator.start_contention,\
         end_contention_hook=exec_validator.end_contention,\
         oracle=oracle,\
-        resub_chance=args.resub_chance
+        resub_chance=args.resub_chance,\
+        allow_contention=args.contention
     )
     reader = SacctReader(args.job_file)
     reader.validate_trace()
@@ -860,8 +864,9 @@ def main():
     C = [Contention(start_time=int((datetime(2020,1,1,1)-datetime(1970,1,1)).total_seconds()),\
                     end_time=int((datetime(2020,1,1,3)-datetime(1970,1,1)).total_seconds()),\
                     severity=(.8,1))]
-    for c in C:
-        c.insert_apriori_events(simulation)
+    if args.contention:
+        for c in C:
+            c.insert_apriori_events(simulation)
 
     load_missing_modules(flux_handle)
     insert_resource_data(flux_handle, args.num_ranks, args.cores_per_rank)
