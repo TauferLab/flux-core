@@ -341,10 +341,15 @@ class Simulation(object):
                 self.resubmit_job(job, self.current_time+600, start_msg)
                 return None
 
-            elif (self.sys_contention or self.contention_event) and self.oracle.canario:
+            elif self.sys_contention and self.oracle.canario:
                 # Do we predict contention and IO-sens job? CanarIO Action
-                if (self.sys_contention.predicted or self.contention_event.predicted) and job.predicted_sens:
+                if self.sys_contention.predicted and job.predicted_sens:
                     self.resubmit_job(job, self.sys_contention.end_time+1, start_msg)
+                    return None
+            elif self.contention_event and self.oracle.canario:
+                # Do we predict contention and IO-sens job? CanarIO Action
+                if self.contention_event.predicted and job.predicted_sens:
+                    self.resubmit_job(job, self.contention_event.end_time+1, start_msg)
                     return None
 
         if self.start_job_hook:

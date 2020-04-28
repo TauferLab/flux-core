@@ -34,7 +34,7 @@ done
 
 for RESUB in 0 0.5 1
 do
-    for PRIONN_ACC in 20 60 100
+    for PRIONN_ACC in 0.2 0.6 1
     do
         OUTPUT=~/repos/Src_IO_Sched_Sim/data/sim-oracle-resub$RESUB-prionn$PRIONN_ACC-canariojob0-canariocon0.log
         if [ -f "$OUTPUT" ]
@@ -54,9 +54,9 @@ done
 
 for RESUB in 0 0.5 1
 do
-    for CANARIO_JOB in 20 60 100
+    for CANARIO_JOB in 0.2 0.6 1
     do
-        for CANARIO_CON in 20 60 100
+        for CANARIO_CON in 0.2 0.6 1
         do
             while [ $(ps -a | grep flux | wc -l) -ge $MAX_PP ]
             do
@@ -82,11 +82,11 @@ do
 done
 for RESUB in 0 0.5 1
 do
-    for PRIONN_ACC in 20 60 100
+    for PRIONN_ACC in 0.2 0.6 1
     do
-        for CANARIO_JOB in 20 60 100
+        for CANARIO_JOB in 0.2 0.6 1
         do
-            for CANARIO_CON in 20 60 100
+            for CANARIO_CON in 0.2 0.6 1
             do
                 while [ $(ps -a | grep flux | wc -l) -ge $MAX_PP ]
                 do
