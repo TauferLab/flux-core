@@ -283,7 +283,7 @@ class Simulation(object):
         if self.IO_usage > self.IO_limit:
             C = Contention(start_time=self.current_time+1,\
                            end_time=self.current_time+600,\
-                           severity=(.2,.6))
+                           severity=(.3,.31))
 
             self.add_event(C.start_time, 'contention', self.start_sys_contention, C)
 
@@ -739,6 +739,7 @@ class SimpleExec(object):
                                    ('elapsed', job.elapsed_time),\
                                    ('original_start', job.original_start),\
                                    ('IO', job.IO),\
+                                   ('sys_IO', simulation.IO_usage),\
                                    ('io_sens', job.io_sens),\
                                    ('goodput', job.good_put),\
                                    ('resubmit', job.resubmit),\
