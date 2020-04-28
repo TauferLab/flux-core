@@ -337,27 +337,14 @@ class Simulation(object):
             job = self.oracle.predict_job(job)
             if self.queued_jobs == 1:
                 pass
-
-            elif (self.IO_usage + job.predicted_IO) > self.IO_limit:
+            elif self.oracle.prionn and (self.IO_usage + job.predicted_IO) > self.IO_limit:
                 self.resubmit_job(job, self.current_time+600, start_msg)
                 return None
 
-            elif self.sys_contention:
+            elif (self.sys_contention or self.contention_event) and self.oracle.canario:
                 # Do we predict contention and IO-sens job? CanarIO Action
-                if self.sys_contention.predicted and job.predicted_sens:
-                    # TODO need to add logic in here so that if there are no other
-                    # jobs to run, the IO sens job can still run!
-                    # First cancel the job
+                if (self.sys_contention.predicted or self.contention_event.predicted) and job.predicted_sens:
                     self.resubmit_job(job, self.sys_contention.end_time+1, start_msg)
-                    return None
-
-            elif self.contention_event:
-                # Do we predict contention and IO-sens job? CanarIO Action
-                if self.contention_event.predicted and job.predicted_sens:
-                    # TODO need to add logic in here so that if there are no other
-                    # jobs to run, the IO sens job can still run!
-                    # First cancel the job
-                    self.resubmit_job(job, self.contention_event.end_time+1, start_msg)
                     return None
 
         if self.start_job_hook:
@@ -378,7 +365,7 @@ class Simulation(object):
         if (self.IO_usage > self.IO_limit) and not self.sys_contention and self.allow_contention:
             C = Contention(start_time=self.current_time+1,\
                            end_time=self.current_time+600,\
-                           severity=(.2,.6))
+                           severity=(.3,.31))
 
             self.add_event(C.start_time, 'contention', self.start_sys_contention, C)
 
@@ -690,10 +677,12 @@ def teardown_watchers(flux_handle, watchers, services):
 Makespan = namedtuple('Makespan', ['beginning', 'end'])
 
 class Oracle(object):
-    def __init__(self, PRIONN_accuracy=1, CanarIO_job_accuracy=1, CanarIO_contention_accuracy=1):
+    def __init__(self, PRIONN_accuracy=1, CanarIO_job_accuracy=1, CanarIO_contention_accuracy=1, prionn=False, canario=False):
         self.PRIONN_accuracy = PRIONN_accuracy
         self.CanarIO_job_accuracy = CanarIO_job_accuracy
         self.CanarIO_contention_accuracy = CanarIO_contention_accuracy
+        self.prionn=prionn
+        self.canario=canario
 
     def predict_job(self, job):
         job.predicted_sens = self.predict_io_sens(job)
@@ -827,6 +816,8 @@ def main():
     parser.add_argument("--canario_con_acc", type=float, default=1.0)
     parser.add_argument("--prionn_job_acc", type=float, default=1.0)
     parser.add_argument("--contention", action='store_true', default=False)
+    parser.add_argument("--prionn", action='store_true', default=False)
+    parser.add_argument("--canario", action='store_true', default=False)
     args = parser.parse_args()
 
     if args.log_level:
@@ -838,7 +829,9 @@ def main():
     if args.oracle:
         oracle = Oracle(PRIONN_accuracy=args.prionn_job_acc,\
                         CanarIO_job_accuracy=args.canario_job_acc,\
-                        CanarIO_contention_accuracy=args.canario_con_acc)
+                        CanarIO_contention_accuracy=args.canario_con_acc,\
+                        prionn=args.prionn,\
+                        canario=args.canario)
     else:
         oracle = None
 
@@ -863,7 +856,7 @@ def main():
 
     C = [Contention(start_time=int((datetime(2020,1,1,1)-datetime(1970,1,1)).total_seconds()),\
                     end_time=int((datetime(2020,1,1,3)-datetime(1970,1,1)).total_seconds()),\
-                    severity=(.8,1))]
+                    severity=(.8,.81))]
     if args.contention:
         for c in C:
             c.insert_apriori_events(simulation)
